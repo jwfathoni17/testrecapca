@@ -16,84 +16,123 @@ CAPTCHASOLV_ENDPOINT = "https://v2.captchasolv.com/solve"
 
 DEFAULT_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
 
-async def solve_recaptcha_api(api_key: str, site_key: str, page_url: str, user_agent: str = DEFAULT_USER_AGENT, notify_func=None):
+async def solve_recaptcha_api(
+    api_key: str,
+    site_key: str,
+    page_url: str,
+    captcha_type: str = "v2_invisible",
+    page_action: str = None,
+    score: str = "normal",
+    user_agent: str = DEFAULT_USER_AGENT,
+    notify_func=None
+):
     """
-    Fungsi untuk mengirim request solve reCAPTCHA v2 Invisible ke CaptchaSolv API.
-    Mendukung dual-compatibility:
-    1. Mencoba CaptchaSolv API v2 (POST https://v2.captchasolv.com/solve)
-    2. Fallback ke CaptchaSolv API v1 (POST https://v1.captchasolv.com/solve)
+    Fungsi untuk mengirim request solve reCAPTCHA ke CaptchaSolv API.
+    Sesuai dokumentasi resmi https://docs.captchasolv.com/
+    
+    Mendukung:
+    - reCAPTCHA v2 Invisible (RecaptchaV2InvisibleTaskProxyless)
+    - reCAPTCHA v2 Checkbox (RecaptchaV2TaskProxyless)
+    - reCAPTCHA v3 (RecaptchaV3TaskProxyless dengan pageAction & score)
     """
+    clean_key = api_key.strip().strip("'").strip('"')
+
+    # Pemetaan tipe task untuk API v1 (docs.captchasolv.com)
+    v1_task_types = {
+        "v2_invisible": "RecaptchaV2InvisibleTaskProxyless",
+        "v2_checkbox": "RecaptchaV2TaskProxyless",
+        "v3": "RecaptchaV3TaskProxyless"
+    }
+    
+    # Pemetaan tipe task untuk API v2 (docsv2.captchasolv.com)
+    v2_task_types = {
+        "v2_invisible": "RecaptchaV2Invisible",
+        "v2_checkbox": "RecaptchaV2",
+        "v3": "RecaptchaV3"
+    }
+
+    target_v1_type = v1_task_types.get(captcha_type, "RecaptchaV2InvisibleTaskProxyless")
+    target_v2_type = v2_task_types.get(captcha_type, "RecaptchaV2Invisible")
+
     if notify_func:
-        await notify_func("🔑 [LOG: API Solver] Mengirim task reCAPTCHA v2 Invisible ke CaptchaSolv API...")
+        await notify_func(f"🔑 [LOG: API Solver] Mengirim task CaptchaSolv ({target_v1_type})...")
 
     async with aiohttp.ClientSession() as session:
-        # --- PERCOBAAN 1: CaptchaSolv API v2 ---
-        v2_payload = {
-            "api_key": api_key,
-            "type": "RecaptchaV2Invisible",
-            "site_url": page_url,
-            "useragent": user_agent,
-            "timeout_secs": 60,
-            "data": {
-                "site_key": site_key
-            }
+        # --- PERCOBAAN 1: CaptchaSolv API v1 (https://v1.captchasolv.com/solve) ---
+        v1_task = {
+            "type": target_v1_type,
+            "websiteURL": page_url,
+            "websiteKey": site_key
         }
-
-        try:
-            async with session.post("https://v2.captchasolv.com/solve", json=v2_payload, timeout=aiohttp.ClientTimeout(total=65)) as resp:
-                if resp.status == 200:
-                    res_data = await resp.json()
-                    logger.info(f"CaptchaSolv API v2 Response: {res_data}")
-
-                    error_id = res_data.get("errorId", -1)
-                    if error_id == 0 and res_data.get("status") == "ready":
-                        data_obj = res_data.get("data") or {}
-                        solution_obj = data_obj.get("solution") or {}
-                        token = solution_obj.get("token") or res_data.get("token")
-                        if token:
-                            solv_time = res_data.get("solvtime", 0)
-                            logger.info(f"Token didapatkan via API v2 dalam {solv_time}s!")
-                            return token
-        except Exception as err_v2:
-            logger.warning(f"Percobaan CaptchaSolv API v2 gagal ({err_v2}). Mencoba fallback API v1...")
-
-        # --- PERCOBAAN 2: CaptchaSolv API v1 (Fallback) ---
-        if notify_func:
-            await notify_func("🔄 [LOG: API Solver] Memproses via CaptchaSolv API v1...")
+        if captcha_type == "v3":
+            if page_action:
+                v1_task["pageAction"] = page_action
+            if score:
+                v1_task["score"] = score
 
         v1_payload = {
-            "clientKey": api_key,
-            "task": {
-                "type": "RecaptchaV2InvisibleTaskProxyless",
-                "websiteURL": page_url,
-                "websiteKey": site_key
-            }
+            "clientKey": clean_key,
+            "task": v1_task
         }
 
         try:
             async with session.post("https://v1.captchasolv.com/solve", json=v1_payload, timeout=aiohttp.ClientTimeout(total=65)) as resp:
+                if resp.status == 200:
+                    res_data = await resp.json()
+                    logger.info(f"CaptchaSolv API v1 Response: {res_data}")
+
+                    if res_data.get("errorId") == 0:
+                        solution_obj = res_data.get("solution") or {}
+                        token = solution_obj.get("token") or solution_obj.get("gRecaptchaResponse") or res_data.get("token")
+                        if token:
+                            logger.info(f"✅ Token reCAPTCHA berhasil didapatkan via API v1!")
+                            return token
+        except Exception as err_v1:
+            logger.warning(f"Percobaan CaptchaSolv API v1 gagal ({err_v1}). Mencoba fallback API v2...")
+
+        # --- PERCOBAAN 2: CaptchaSolv API v2 (https://v2.captchasolv.com/solve) ---
+        if notify_func:
+            await notify_func("🔄 [LOG: API Solver] Memproses via CaptchaSolv API v2...")
+
+        v2_data = {"site_key": site_key}
+        if captcha_type == "v3" and page_action:
+            v2_data["page_action"] = page_action
+
+        v2_payload = {
+            "api_key": clean_key,
+            "type": target_v2_type,
+            "site_url": page_url,
+            "useragent": user_agent,
+            "timeout_secs": 60,
+            "data": v2_data
+        }
+
+        try:
+            async with session.post("https://v2.captchasolv.com/solve", json=v2_payload, timeout=aiohttp.ClientTimeout(total=65)) as resp:
                 if resp.status != 200:
                     text = await resp.text()
                     raise RuntimeError(f"HTTP Error {resp.status}: {text[:100]}")
 
                 res_data = await resp.json()
-                logger.info(f"CaptchaSolv API v1 Response: {res_data}")
+                logger.info(f"CaptchaSolv API v2 Response: {res_data}")
 
                 error_id = res_data.get("errorId", -1)
-                if error_id == 0:
-                    solution_obj = res_data.get("solution") or {}
-                    token = solution_obj.get("token") or res_data.get("token")
+                if error_id == 0 and res_data.get("status") == "ready":
+                    data_obj = res_data.get("data") or {}
+                    solution_obj = data_obj.get("solution") or {}
+                    token = solution_obj.get("token") or data_obj.get("token") or res_data.get("token")
                     if token:
-                        logger.info("Token didapatkan via API v1!")
+                        solv_time = res_data.get("solvtime", 0)
+                        logger.info(f"✅ Token reCAPTCHA berhasil didapatkan via API v2 dalam {solv_time}s!")
                         return token
-                    raise RuntimeError("Token tidak ditemukan pada response CaptchaSolv API v1.")
+                    raise RuntimeError("Token tidak ditemukan pada response CaptchaSolv v2.")
                 else:
                     error_msg = res_data.get("errorMessage") or f"errorId {error_id}"
-                    raise RuntimeError(f"CaptchaSolv API v1 Error: {error_msg}")
+                    raise RuntimeError(f"CaptchaSolv API v2 Error: {error_msg}")
 
-        except Exception as err_v1:
-            logger.error(f"Gagal memecahkan captcha via API v2 maupun API v1: {err_v1}")
-            raise err_v1
+        except Exception as err_v2:
+            logger.error(f"Gagal memecahkan captcha via API v1 maupun API v2: {err_v2}")
+            raise err_v2
 
 
 async def run_capskip_demo(headless: bool = True, status_callback=None):
