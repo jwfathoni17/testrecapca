@@ -79,6 +79,8 @@ async def handle_test_callback(update: Update, context: ContextTypes.DEFAULT_TYP
         
         screenshot_path = res.get("screenshot")
         raw_status = res.get("status_text", "Tombol Check Ditekan")
+        if len(raw_status) > 150:
+            raw_status = raw_status[:147] + "..."
         safe_status = html.escape(str(raw_status))
         
         # 3. Kirim foto hasil ke Telegram jika berhasil
@@ -107,6 +109,8 @@ async def handle_test_callback(update: Update, context: ContextTypes.DEFAULT_TYP
                 
         else:
             raw_error = res.get("error", "Gagal melakukan scraping")
+            if len(raw_error) > 150:
+                raw_error = raw_error[:147] + "..."
             safe_error = html.escape(str(raw_error))
             await context.bot.edit_message_text(
                 chat_id=chat_id,
@@ -118,7 +122,10 @@ async def handle_test_callback(update: Update, context: ContextTypes.DEFAULT_TYP
             
     except Exception as e:
         logger.error(f"Error pada callback handler: {e}")
-        safe_exc = html.escape(str(e))
+        raw_exc = str(e)
+        if len(raw_exc) > 150:
+            raw_exc = raw_exc[:147] + "..."
+        safe_exc = html.escape(raw_exc)
         try:
             await context.bot.edit_message_text(
                 chat_id=chat_id,

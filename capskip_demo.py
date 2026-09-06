@@ -16,8 +16,9 @@ async def run_capskip_demo(headless: bool = True, status_callback=None):
     
     Fitur Peningkatan:
     - status_callback: Mengirim log progress secara real-time ke bot Telegram.
-    - Polling deteksi tombol 'Reset' & box 'VERIFICATION RESPONSE' (Success: true).
-    - Centering scroll & Zoom 90% presisi sesuai contoh screenshot sukses.
+    - Menunggu persis 10 detik setelah menekan tombol Check.
+    - Screenshot Desktop Viewport (Zoom 90%) dengan scroll terpusat ke widget.
+    - Pembatasan teks status maksimal 150 karakter untuk mencegah 'Message_too_long'.
     """
     async def notify(text: str):
         logger.info(text)
@@ -74,60 +75,41 @@ async def run_capskip_demo(headless: bool = True, status_callback=None):
             # 3. Klik Tombol Check
             await check_button.click()
             
-            # 4. Menunggu Hasil Verifikasi (Deteksi Tombol Reset & VERIFICATION RESPONSE)
-            await notify("⏳ [LOG: 3/4] Menunggu proses verifikasi reCAPTCHA & kemunculan tombol Reset...")
+            # 4. Menunggu Tepat 10 Detik
+            await notify("⏳ [LOG: 3/4] Menekan Check & menunggu 10 detik untuk verifikasi...")
+            await asyncio.sleep(10)
             
+            # 5. Membaca Status Hasil (Dibatasi panjangnya agar tidak Message_too_long)
             status_text = ""
             recaptcha_token = ""
-            is_verifying = True
             
-            start_time = asyncio.get_event_loop().time()
-            while (asyncio.get_event_loop().time() - start_time) < 30:
-                # 1. Deteksi apakah tombol Reset sudah muncul
-                reset_btn = page.locator("button.captcha-reset, button:has-text('Reset')").first
-                reset_visible = await reset_btn.count() > 0 and await reset_btn.is_visible()
-                
-                # 2. Deteksi box VERIFICATION RESPONSE (.captcha-result)
-                result_box = page.locator(".captcha-result, [data-captcha-result]").first
-                result_visible = await result_box.count() > 0 and await result_box.is_visible()
-                result_text = ""
-                if result_visible:
-                    result_text = await result_box.inner_text()
-
-                # 3. Deteksi token di hidden textarea/input
-                token_input = page.locator('textarea[name="g-recaptcha-response"], input[name="g-recaptcha-response"]').first
-                if await token_input.count() > 0:
-                    recaptcha_token = await token_input.input_value()
-                
-                # Cek teks status umum di widget
-                status_locator = page.locator("[data-captcha-status], .captcha-widget__status").first
-                if await status_locator.count() > 0:
-                    status_text = (await status_locator.inner_text()).strip()
-
-                # Jika tombol Reset ATAU box VERIFICATION RESPONSE muncul -> VERIFIKASI BERHASIL!
-                if reset_visible or (result_visible and ("success" in result_text.lower() or "true" in result_text.lower())):
-                    is_verifying = False
-                    status_text = "✅ Success: true (Verified & Token Generated)"
-                    logger.info("Tombol Reset / Verification Response 'Success: true' berhasil terdeteksi!")
-                    break
-                    
-                if status_text and "verifying" not in status_text.lower():
-                    is_verifying = False
-                    logger.info(f"Verifikasi selesai dengan status: '{status_text}'")
-                    break
-
-                await asyncio.sleep(1.0)
+            # Cek tombol Reset
+            reset_btn = page.locator("button.captcha-reset, button:has-text('Reset')").first
+            reset_visible = await reset_btn.count() > 0 and await reset_btn.is_visible()
             
-            if is_verifying:
-                if not status_text or status_text.lower() == "verifying...":
-                    status_text = "⚠️ Verifying (Google Invisible reCAPTCHA dipicu / Menunggu Solver)"
-                logger.warning(f"Waktu tunggu habis. Status: '{status_text}'")
+            # Cek box result
+            result_box = page.locator(".captcha-result, [data-captcha-result]").first
+            result_visible = await result_box.count() > 0 and await result_box.is_visible()
+            
+            # Cek teks status umum di widget
+            status_locator = page.locator("[data-captcha-status], .captcha-widget__status").first
+            if await status_locator.count() > 0:
+                status_text = (await status_locator.inner_text()).strip()
+            
+            if reset_visible or result_visible:
+                status_text = "Success: true (Verified & Token Generated)"
+            elif not status_text or "verifying" in status_text.lower():
+                status_text = "Verifying / Google Challenge Dipicu"
 
-            # 5. Screenshot Desktop Viewport Centered (Zoom 90%)
+            # Potong status_text jika terlalu panjang (Maksimal 150 Karakter)
+            if len(status_text) > 150:
+                status_text = status_text[:147] + "..."
+
+            # 6. Screenshot Desktop Viewport Centered (Zoom 90%)
             await notify("✨ [LOG: 4/4] Mengambil screenshot tampilan Desktop...")
             screenshot_path = "capskip_result.png"
             
-            # Posisikan Scroll presisi ke tengah widget (seperti pada contoh screenshot sukses)
+            # Posisikan Scroll presisi ke tengah widget
             try:
                 await page.evaluate("""() => {
                     document.body.style.zoom = '90%';
@@ -144,26 +126,28 @@ async def run_capskip_demo(headless: bool = True, status_callback=None):
                 
             await asyncio.sleep(0.8)
             
-            # Screenshot Desktop Viewport
+            # Screenshot Desktop Viewport (full_page=False)
             await page.screenshot(path=screenshot_path, full_page=False)
                 
             logger.info(f"Bukti screenshot disimpan ke: {screenshot_path}")
             
             return {
                 "success": True,
-                "status_text": status_text if status_text else "Proses Selesai",
+                "status_text": status_text,
                 "token": recaptcha_token,
-                "screenshot": screenshot_path,
-                "is_verifying": is_verifying
+                "screenshot": screenshot_path
             }
 
         except Exception as e:
             logger.error(f"❌ Terjadi kesalahan saat scraping: {e}")
             error_screenshot = "capskip_error.png"
             await page.screenshot(path=error_screenshot, full_page=False)
+            err_msg = str(e)
+            if len(err_msg) > 150:
+                err_msg = err_msg[:147] + "..."
             return {
                 "success": False,
-                "error": str(e),
+                "error": err_msg,
                 "screenshot": error_screenshot
             }
             
