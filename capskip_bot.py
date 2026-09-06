@@ -83,13 +83,13 @@ async def handle_test_callback(update: Update, context: ContextTypes.DEFAULT_TYP
             raw_status = raw_status[:147] + "..."
         safe_status = html.escape(str(raw_status))
         
-        # 3. Kirim foto hasil ke Telegram jika berhasil
-        if res.get("success") and screenshot_path and os.path.exists(screenshot_path):
+        # 3. Kirim foto hasil ke Telegram (Selalu kirim jika file screenshot terbuat)
+        if screenshot_path and os.path.exists(screenshot_path):
             caption = (
-                "✅ <b>WEB SCRAPING SELESAI!</b>\n\n"
+                "📸 <b>HASIL SCRAPING (10s Setelah Check)</b>\n\n"
                 "🌐 <b>Target URL</b>: <code>https://capskip.com/captcha-demo/recaptcha-v2-invisible/</code>\n"
-                f"📊 <b>Status Web Akhir</b>: <code>{safe_status}</code>\n\n"
-                "🖼️ <i>Bukti screenshot halaman terlampir di bawah:</i>"
+                f"📊 <b>Status Web</b>: <code>{safe_status}</code>\n\n"
+                "🖼️ <i>Screenshot tampilan Desktop (Zoom 90%) terlampir di bawah:</i>"
             )
             
             with open(screenshot_path, "rb") as photo_file:
@@ -101,21 +101,21 @@ async def handle_test_callback(update: Update, context: ContextTypes.DEFAULT_TYP
                     reply_markup=get_test_keyboard()
                 )
             
-            # Hapus pesan status sementara agar chat bersih (tidak menumpuk)
+            # Hapus pesan status sementara agar chat bersih
             try:
                 await context.bot.delete_message(chat_id=chat_id, message_id=status_msg.message_id)
             except Exception:
                 pass
                 
         else:
-            raw_error = res.get("error", "Gagal melakukan scraping")
-            if len(raw_error) > 150:
-                raw_error = raw_error[:147] + "..."
+            raw_error = res.get("error", "File screenshot tidak ditemukan")
+            if len(raw_error) > 100:
+                raw_error = raw_error[:97] + "..."
             safe_error = html.escape(str(raw_error))
             await context.bot.edit_message_text(
                 chat_id=chat_id,
                 message_id=status_msg.message_id,
-                text=f"❌ <b>Gagal Memproses Scraping:</b>\n<code>{safe_error}</code>",
+                text=f"❌ <b>Informasi Scraping:</b>\n<code>{safe_error}</code>",
                 parse_mode="HTML",
                 reply_markup=get_test_keyboard()
             )
