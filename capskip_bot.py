@@ -77,8 +77,7 @@ async def handle_test_callback(update: Update, context: ContextTypes.DEFAULT_TYP
         # 2. Jalankan fungsi web scraping dengan status_callback
         res = await run_capskip_demo(headless=True, status_callback=update_status)
         
-        ss1 = res.get("screenshot1")
-        ss2 = res.get("screenshot2")
+        ss = res.get("screenshot") or res.get("screenshot1")
         raw_status = res.get("status_text", "Proses Selesai")
         if len(raw_status) > 150:
             raw_status = raw_status[:147] + "..."
@@ -90,46 +89,28 @@ async def handle_test_callback(update: Update, context: ContextTypes.DEFAULT_TYP
         except Exception:
             pass
 
-        # 3. Kirim Screenshot 1 (10s Pertama)
-        if ss1 and os.path.exists(ss1):
-            with open(ss1, "rb") as photo_file1:
-                await context.bot.send_photo(
-                    chat_id=chat_id,
-                    photo=photo_file1,
-                    caption="📸 <b>SCREENSHOT 1 (10 Detik Pertama Setelah Check)</b>",
-                    parse_mode="HTML"
-                )
-
-        # 4. Kirim Screenshot 2 (10s Kedua / Total 20s) beserta tombol Test
-        if ss2 and os.path.exists(ss2):
-            caption2 = (
-                "📸 <b>SCREENSHOT 2 (10 Detik Kedua / Total 20 Detik)</b>\n\n"
+        # 3. Kirim Foto Hasil Screenshot
+        if ss and os.path.exists(ss):
+            caption = (
+                "📸 <b>HASIL SCRAPING DEMO CAPSKIP</b>\n\n"
                 "🌐 <b>Target URL</b>: <code>https://capskip.com/captcha-demo/recaptcha-v2-invisible/</code>\n"
                 f"📊 <b>Status Web Akhir</b>: <code>{safe_status}</code>"
             )
-            with open(ss2, "rb") as photo_file2:
+            with open(ss, "rb") as photo_file:
                 await context.bot.send_photo(
                     chat_id=chat_id,
-                    photo=photo_file2,
-                    caption=caption2,
+                    photo=photo_file,
+                    caption=caption,
                     parse_mode="HTML",
                     reply_markup=get_test_keyboard()
                 )
-        elif ss1 and os.path.exists(ss1):
-            # Fallback jika hanya ss1 yang ada
-            await context.bot.send_message(
-                chat_id=chat_id,
-                text="⚠️ Screenshot 2 tidak tersedia.",
-                reply_markup=get_test_keyboard()
-            )
         else:
             raw_error = res.get("error", "File screenshot tidak ditemukan")
             if len(raw_error) > 100:
                 raw_error = raw_error[:97] + "..."
             safe_error = html.escape(str(raw_error))
-            await context.bot.edit_message_text(
+            await context.bot.send_message(
                 chat_id=chat_id,
-                message_id=status_msg.message_id,
                 text=f"❌ <b>Informasi Scraping:</b>\n<code>{safe_error}</code>",
                 parse_mode="HTML",
                 reply_markup=get_test_keyboard()
