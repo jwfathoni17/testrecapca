@@ -6,7 +6,7 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s"
 )
-logger = logger = logging.getLogger("CapSkipScraper")
+logger = logging.getLogger("CapSkipScraper")
 
 TARGET_URL = "https://capskip.com/captcha-demo/recaptcha-v2-invisible/"
 
@@ -14,11 +14,11 @@ async def run_capskip_demo(headless: bool = True, status_callback=None):
     """
     Fungsi web scraping demo reCAPTCHA v2 Invisible.
     
-    Peningkatan Utama:
-    1. Membuka halaman dengan wait_until="networkidle" agar seluruh listener reCAPTCHA terpasang.
-    2. Menekan tombol Check dengan 3 kombinasi metode (Native Click, JS MouseEvent, Bounding Box Click).
-    3. CSS Zoom 90% baru diterapkan SEBELUM screenshot (bukan sebelum klik), agar posisi tombol tidak bergeser.
-    4. Menunggu tepat 10 detik setelah klik.
+    Alur 2 Screenshot (Double SS):
+    1. Membuka URL target & menekan tombol 'Check'.
+    2. Menunggu 10 detik -> Mengambil Screenshot 1 (capskip_result_1.png).
+    3. Menunggu 10 detik lagi (total 20 detik) -> Mengambil Screenshot 2 (capskip_result_2.png).
+    4. Mengirim kedua gambar tersebut ke Telegram untuk membandingkan perkembangan status web.
     """
     async def notify(text: str):
         logger.info(text)
@@ -28,7 +28,7 @@ async def run_capskip_demo(headless: bool = True, status_callback=None):
             except Exception:
                 pass
 
-    await notify("🌐 [LOG: 1/4] Membuka halaman CapSkip Demo...")
+    await notify("🌐 [LOG: 1/5] Membuka halaman CapSkip Demo...")
     
     async with async_playwright() as p:
         browser = await p.chromium.launch(
@@ -47,7 +47,8 @@ async def run_capskip_demo(headless: bool = True, status_callback=None):
         )
         
         page = await context.new_page()
-        screenshot_path = "capskip_result.png"
+        ss1_path = "capskip_result_1.png"
+        ss2_path = "capskip_result_2.png"
         
         try:
             # 1. Buka Halaman Target dan tunggu network idle
@@ -63,26 +64,22 @@ async def run_capskip_demo(headless: bool = True, status_callback=None):
             except Exception:
                 pass
             
-            # 2. Cari Tombol 'Check'
-            await notify("🖱️ [LOG: 2/4] Mencari dan menekan tombol 'Check'...")
+            # 2. Cari & Klik Tombol 'Check'
+            await notify("🖱️ [LOG: 2/5] Mencari dan menekan tombol 'Check'...")
             
             check_btn = page.locator("button.captcha-verify, button:has-text('Check')").first
             await check_btn.wait_for(state="visible", timeout=15000)
             await check_btn.scroll_into_view_if_needed()
             await asyncio.sleep(1)
             
-            # Eksekusi 3 metode penekanan tombol secara berturut-turut
+            # Eksekusi multi-strategy click
             logger.info("Menjalankan multi-strategy click pada tombol Check...")
-            
-            # Metode 1: Playwright Native Click
             try:
                 await check_btn.click(timeout=3000)
             except Exception:
                 pass
 
             await asyncio.sleep(0.3)
-
-            # Metode 2: Javascript DOM Click & MouseEvent Dispatch
             try:
                 await page.evaluate("""() => {
                     const btn = document.querySelector('button.captcha-verify') || Array.from(document.querySelectorAll('button')).find(b => b.innerText && b.innerText.trim().toLowerCase() === 'check');
@@ -96,8 +93,6 @@ async def run_capskip_demo(headless: bool = True, status_callback=None):
                 pass
 
             await asyncio.sleep(0.3)
-
-            # Metode 3: Bounding Box Mouse Coordinate Click
             try:
                 box = await check_btn.bounding_box()
                 if box:
@@ -105,36 +100,11 @@ async def run_capskip_demo(headless: bool = True, status_callback=None):
             except Exception:
                 pass
 
-            # 3. Menunggu Tepat 10 Detik
-            await notify("⏳ [LOG: 3/4] Tombol Check ditekankan! Menunggu 10 detik...")
+            # 3. Menunggu 10 detik pertama -> Ambil Screenshot 1
+            await notify("⏳ [LOG: 3/5] Tombol Check ditekankan! Menunggu 10 detik pertama...")
             await asyncio.sleep(10)
             
-            # 4. Membaca Status Singkat dari Web
-            status_text = "Check Ditekan (Selesai 10s)"
-            try:
-                status_locator = page.locator("[data-captcha-status], .captcha-widget__status").first
-                if await status_locator.count() > 0:
-                    st = (await status_locator.inner_text()).strip()
-                    if st:
-                        status_text = st
-            except Exception:
-                pass
-
-            # Cek tombol Reset / Result box
-            try:
-                reset_btn = page.locator("button.captcha-reset, button:has-text('Reset')").first
-                result_box = page.locator(".captcha-result, [data-captcha-result]").first
-                if (await reset_btn.count() > 0 and await reset_btn.is_visible()) or (await result_box.count() > 0 and await result_box.is_visible()):
-                    status_text = "Success: true (Verified & Token Generated)"
-            except Exception:
-                pass
-
-            if len(status_text) > 100:
-                status_text = status_text[:97] + "..."
-
-            # 5. TERAPKAN ZOOM 90% & SCROLL CENTER SEBELUM SCREENSHOT
-            await notify("✨ [LOG: 4/4] Mengambil screenshot tampilan Desktop...")
-            
+            # Zoom 90%, Remove Popups, & Scroll Center
             try:
                 await page.evaluate("""() => {
                     document.body.style.zoom = '90%';
@@ -149,28 +119,72 @@ async def run_capskip_demo(headless: bool = True, status_callback=None):
             except Exception:
                 pass
                 
-            await asyncio.sleep(1.0)
+            await asyncio.sleep(0.8)
+            await page.screenshot(path=ss1_path, full_page=False)
+            logger.info(f"Screenshot 1 (10s pertama) disimpan ke: {ss1_path}")
+
+            # 4. Menunggu 10 detik kedua (Total 20s) -> Ambil Screenshot 2
+            await notify("⏳ [LOG: 4/5] Screenshot 1 diambil. Menunggu 10 detik lagi (Total 20s)...")
+            await asyncio.sleep(10)
             
-            # Ambil screenshot ukuran Desktop (full_page=False)
-            await page.screenshot(path=screenshot_path, full_page=False)
-            logger.info(f"Bukti screenshot disimpan ke: {screenshot_path}")
-            
+            # Zoom 90% & Scroll Center sekali lagi
+            try:
+                await page.evaluate("""() => {
+                    document.body.style.zoom = '90%';
+                    const popups = document.querySelectorAll('.cap-popup, .ekit-popup, div[class*="community"]');
+                    popups.forEach(el => el.remove());
+                    
+                    const widget = document.querySelector('#capskip-demo, .captcha-widget');
+                    if (widget) {
+                        widget.scrollIntoView({ block: 'center', behavior: 'instant' });
+                    }
+                }""")
+            except Exception:
+                pass
+
+            await asyncio.sleep(0.8)
+            await page.screenshot(path=ss2_path, full_page=False)
+            logger.info(f"Screenshot 2 (10s kedua / Total 20s) disimpan ke: {ss2_path}")
+
+            # 5. Membaca Status Teks Singkat Akhir
+            status_text = "Proses Selesai (2x Screenshot)"
+            try:
+                reset_btn = page.locator("button.captcha-reset, button:has-text('Reset')").first
+                result_box = page.locator(".captcha-result, [data-captcha-result]").first
+                if (await reset_btn.count() > 0 and await reset_btn.is_visible()) or (await result_box.count() > 0 and await result_box.is_visible()):
+                    status_text = "Success: true (Verified & Token Generated)"
+                else:
+                    status_locator = page.locator("[data-captcha-status], .captcha-widget__status").first
+                    if await status_locator.count() > 0:
+                        st = (await status_locator.inner_text()).strip()
+                        if st:
+                            status_text = st
+            except Exception:
+                pass
+
+            if len(status_text) > 100:
+                status_text = status_text[:97] + "..."
+
+            await notify("✨ [LOG: 5/5] Kedua screenshot berhasil diambil!")
+
             return {
                 "success": True,
                 "status_text": status_text,
-                "screenshot": screenshot_path
+                "screenshot1": ss1_path,
+                "screenshot2": ss2_path
             }
 
         except Exception as e:
             logger.error(f"❌ Terjadi kesalahan: {e}")
             try:
-                await page.screenshot(path=screenshot_path, full_page=False)
+                await page.screenshot(path=ss1_path, full_page=False)
             except Exception:
                 pass
             return {
                 "success": True,
                 "status_text": f"Status: {str(e)[:80]}",
-                "screenshot": screenshot_path
+                "screenshot1": ss1_path,
+                "screenshot2": None
             }
             
         finally:

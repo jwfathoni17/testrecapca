@@ -77,36 +77,51 @@ async def handle_test_callback(update: Update, context: ContextTypes.DEFAULT_TYP
         # 2. Jalankan fungsi web scraping dengan status_callback
         res = await run_capskip_demo(headless=True, status_callback=update_status)
         
-        screenshot_path = res.get("screenshot")
-        raw_status = res.get("status_text", "Tombol Check Ditekan")
+        ss1 = res.get("screenshot1")
+        ss2 = res.get("screenshot2")
+        raw_status = res.get("status_text", "Proses Selesai")
         if len(raw_status) > 150:
             raw_status = raw_status[:147] + "..."
         safe_status = html.escape(str(raw_status))
         
-        # 3. Kirim foto hasil ke Telegram (Selalu kirim jika file screenshot terbuat)
-        if screenshot_path and os.path.exists(screenshot_path):
-            caption = (
-                "📸 <b>HASIL SCRAPING (10s Setelah Check)</b>\n\n"
-                "🌐 <b>Target URL</b>: <code>https://capskip.com/captcha-demo/recaptcha-v2-invisible/</code>\n"
-                f"📊 <b>Status Web</b>: <code>{safe_status}</code>\n\n"
-                "🖼️ <i>Screenshot tampilan Desktop (Zoom 90%) terlampir di bawah:</i>"
-            )
-            
-            with open(screenshot_path, "rb") as photo_file:
+        # Hapus pesan log sementara agar chat bersih
+        try:
+            await context.bot.delete_message(chat_id=chat_id, message_id=status_msg.message_id)
+        except Exception:
+            pass
+
+        # 3. Kirim Screenshot 1 (10s Pertama)
+        if ss1 and os.path.exists(ss1):
+            with open(ss1, "rb") as photo_file1:
                 await context.bot.send_photo(
                     chat_id=chat_id,
-                    photo=photo_file,
-                    caption=caption,
+                    photo=photo_file1,
+                    caption="📸 <b>SCREENSHOT 1 (10 Detik Pertama Setelah Check)</b>",
+                    parse_mode="HTML"
+                )
+
+        # 4. Kirim Screenshot 2 (10s Kedua / Total 20s) beserta tombol Test
+        if ss2 and os.path.exists(ss2):
+            caption2 = (
+                "📸 <b>SCREENSHOT 2 (10 Detik Kedua / Total 20 Detik)</b>\n\n"
+                "🌐 <b>Target URL</b>: <code>https://capskip.com/captcha-demo/recaptcha-v2-invisible/</code>\n"
+                f"📊 <b>Status Web Akhir</b>: <code>{safe_status}</code>"
+            )
+            with open(ss2, "rb") as photo_file2:
+                await context.bot.send_photo(
+                    chat_id=chat_id,
+                    photo=photo_file2,
+                    caption=caption2,
                     parse_mode="HTML",
                     reply_markup=get_test_keyboard()
                 )
-            
-            # Hapus pesan status sementara agar chat bersih
-            try:
-                await context.bot.delete_message(chat_id=chat_id, message_id=status_msg.message_id)
-            except Exception:
-                pass
-                
+        elif ss1 and os.path.exists(ss1):
+            # Fallback jika hanya ss1 yang ada
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text="⚠️ Screenshot 2 tidak tersedia.",
+                reply_markup=get_test_keyboard()
+            )
         else:
             raw_error = res.get("error", "File screenshot tidak ditemukan")
             if len(raw_error) > 100:
