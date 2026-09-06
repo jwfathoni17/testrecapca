@@ -14,7 +14,9 @@ TARGET_URL = "https://capskip.com/captcha-demo/recaptcha-v2-invisible/"
 SITE_KEY = "6LdDaSstAAAAAMRGlOvQjLQGaT1jD9s-HXwGIez7"
 CAPTCHASOLV_ENDPOINT = "https://v2.captchasolv.com/solve"
 
-async def solve_recaptcha_api(api_key: str, site_key: str, page_url: str, notify_func=None):
+DEFAULT_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
+
+async def solve_recaptcha_api(api_key: str, site_key: str, page_url: str, user_agent: str = DEFAULT_USER_AGENT, notify_func=None):
     """
     Fungsi untuk mengirim request solve reCAPTCHA v2 Invisible ke CaptchaSolv REST API
     (https://v2.captchasolv.com/solve) secara asynchronous.
@@ -26,6 +28,7 @@ async def solve_recaptcha_api(api_key: str, site_key: str, page_url: str, notify
         "api_key": api_key,
         "type": "RecaptchaV2Invisible",
         "site_url": page_url,
+        "useragent": user_agent,
         "timeout_secs": 60,
         "data": {
             "site_key": site_key
@@ -105,7 +108,7 @@ async def run_capskip_demo(headless: bool = True, status_callback=None):
         
         context = await browser.new_context(
             viewport={"width": 1366, "height": 768},
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
+            user_agent=DEFAULT_USER_AGENT
         )
         
         page = await context.new_page()
@@ -130,7 +133,7 @@ async def run_capskip_demo(headless: bool = True, status_callback=None):
             if api_key:
                 await notify("🔑 [LOG: 2/4] API Key CaptchaSolv terdeteksi! Mengirim request ke CaptchaSolv API...")
                 try:
-                    token = await solve_recaptcha_api(api_key, SITE_KEY, TARGET_URL, notify_func=notify)
+                    token = await solve_recaptcha_api(api_key, SITE_KEY, TARGET_URL, user_agent=DEFAULT_USER_AGENT, notify_func=notify)
                     
                     await notify("⚡ [LOG: 3/4] Token CaptchaSolv didapatkan! Menyuntikkan token & memicu Callback JS...")
                     
