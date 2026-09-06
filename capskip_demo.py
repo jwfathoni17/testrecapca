@@ -169,18 +169,57 @@ async def run_capskip_demo(headless: bool = True, status_callback=None):
                     
                     await notify("⚡ [LOG: 3/4] Token CaptchaSolv didapatkan! Menyuntikkan token & memicu Callback JS...")
                     
-                    # Injeksi token ke form & panggil callback
+                    # Injeksi token ke form & panggil callback JS secara komprehensif
                     await page.evaluate("""(token) => {
-                        const input = document.querySelector('textarea[name="g-recaptcha-response"], input[name="g-recaptcha-response"]');
-                        if (input) input.value = token;
+                        // 1. Isu & set value ke seluruh elemen g-recaptcha-response
+                        const elements = document.querySelectorAll('textarea[name="g-recaptcha-response"], input[name="g-recaptcha-response"], #g-recaptcha-response');
+                        elements.forEach(el => {
+                            el.value = token;
+                            el.dispatchEvent(new Event('input', { bubbles: true }));
+                            el.dispatchEvent(new Event('change', { bubbles: true }));
+                        });
                         
+                        // 2. Panggil callback spesifik CapSkip jika ada
                         if (typeof window.capskipV2InvisibleToken === 'function') {
-                            window.capskipV2InvisibleToken(token);
+                            try { window.capskipV2InvisibleToken(token); } catch(e) {}
                         } else if (typeof capskipV2InvisibleToken === 'function') {
-                            capskipV2InvisibleToken(token);
+                            try { capskipV2InvisibleToken(token); } catch(e) {}
                         }
+
+                        // 3. Cari dan panggil callback di ___grecaptcha_cfg jika ada
+                        try {
+                            if (window.___grecaptcha_cfg && window.___grecaptcha_cfg.clients) {
+                                Object.keys(window.___grecaptcha_cfg.clients).forEach(key => {
+                                    const client = window.___grecaptcha_cfg.clients[key];
+                                    function searchCallback(obj, depth = 0) {
+                                        if (!obj || depth > 5) return;
+                                        for (let prop in obj) {
+                                            if (prop === 'callback' && typeof obj[prop] === 'function') {
+                                                try { obj[prop](token); } catch(e) {}
+                                            } else if (prop === 'callback' && typeof obj[prop] === 'string' && typeof window[obj[prop]] === 'function') {
+                                                try { window[obj[prop]](token); } catch(e) {}
+                                            } else if (typeof obj[prop] === 'object' && obj[prop] !== null) {
+                                                searchCallback(obj[prop], depth + 1);
+                                            }
+                                        }
+                                    }
+                                    searchCallback(client);
+                                });
+                            }
+                        } catch(e) {}
                     }""", token)
                     
+                    await asyncio.sleep(2)
+
+                    # Jika widget belum menampilkan status sukses, tekan tombol Check untuk memicu submit
+                    try:
+                        await page.evaluate("""() => {
+                            const btn = document.querySelector('button.captcha-verify') || Array.from(document.querySelectorAll('button')).find(b => b.innerText && b.innerText.trim().toLowerCase() === 'check');
+                            if (btn) btn.click();
+                        }""")
+                    except Exception:
+                        pass
+
                     await asyncio.sleep(3) # Tunggu 3 detik agar widget merender Success: true
                     
                 except Exception as err:
