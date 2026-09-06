@@ -3,6 +3,7 @@ import html
 import logging
 import asyncio
 import uvicorn
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, Response
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
@@ -16,9 +17,31 @@ logging.basicConfig(
 logger = logging.getLogger("CapSkipBot")
 
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
-
-app = FastAPI()
 telegram_app = None
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """
+    Lifespan context manager untuk inisialisasi dan shutdown Telegram Application.
+    """
+    global telegram_app
+    if not TOKEN:
+        logger.warning("TELEGRAM_BOT_TOKEN belum diset di environment variables!")
+    else:
+        telegram_app = Application.builder().token(TOKEN).build()
+        telegram_app.add_handler(CommandHandler("start", start))
+        telegram_app.add_handler(CallbackQueryHandler(handle_test_callback, pattern="^test_scraping$"))
+        
+        await telegram_app.initialize()
+        await telegram_app.start()
+        logger.info("Bot Telegram Webhook berhasil di-inisialisasi!")
+    yield
+    if telegram_app:
+        await telegram_app.stop()
+        await telegram_app.shutdown()
+        logger.info("Bot Telegram Webhook berhasil di-shutdown.")
+
+app = FastAPI(lifespan=lifespan)
 
 def get_test_keyboard():
     """
@@ -50,7 +73,10 @@ async def handle_test_callback(update: Update, context: ContextTypes.DEFAULT_TYP
     Menggunakan update_status kontinu (edit 1 pesan yang sama) seperti di bot.py.
     """
     query = update.callback_query
-    await query.answer()
+    try:
+        await query.answer()
+    except Exception:
+        pass
     
     chat_id = query.message.chat.id
     
@@ -157,34 +183,7 @@ async def webhook(request: Request):
         logger.error(f"Error pada endpoint webhook: {e}")
     return {"status": "ok"}
 
-@app.on_event("startup")
-async def startup_event():
-    """
-    Inisialisasi Telegram Application saat FastAPI server dimulai.
-    """
-    global telegram_app
-    if not TOKEN:
-        logger.warning("TELEGRAM_BOT_TOKEN belum diset di environment variables!")
-        return
-
-    telegram_app = Application.builder().token(TOKEN).build()
-    telegram_app.add_handler(CommandHandler("start", start))
-    telegram_app.add_handler(CallbackQueryHandler(handle_test_callback, pattern="^test_scraping$"))
-    
-    await telegram_app.initialize()
-    await telegram_app.start()
-    logger.info("Bot Telegram Webhook berhasil di-inisialisasi!")
-
-@app.on_event("shutdown")
-async def shutdown_event():
-    """
-    Clean shutdown Telegram application saat server mati.
-    """
-    global telegram_app
-    if telegram_app:
-        await telegram_app.stop()
-        await telegram_app.shutdown()
-
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 8080))
     uvicorn.run("capskip_bot:app", host="0.0.0.0", port=port, reload=False)
+
