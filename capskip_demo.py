@@ -12,78 +12,75 @@ logger = logging.getLogger("CapSkipScraper")
 
 TARGET_URL = "https://capskip.com/captcha-demo/recaptcha-v2-invisible/"
 SITE_KEY = "6LdDaSstAAAAAMRGlOvQjLQGaT1jD9s-HXwGIez7"
+CAPTCHASOLV_ENDPOINT = "https://v2.captchasolv.com/solve"
 
 async def solve_recaptcha_api(api_key: str, site_key: str, page_url: str, notify_func=None):
     """
-    Fungsi untuk mengirim request solve reCAPTCHA v2 Invisible ke SolveCaptcha / 2Captcha API
-    menggunakan aiohttp secara asynchronous.
+    Fungsi untuk mengirim request solve reCAPTCHA v2 Invisible ke CaptchaSolv REST API
+    (https://v2.captchasolv.com/solve) secara asynchronous.
     """
-    # Menentukan base URL (SolveCaptcha / 2Captcha)
-    base_url = "https://api.solvecaptcha.com" if "solvecaptcha" in api_key.lower() else "https://2captcha.com"
-    in_url = f"{base_url}/in.php"
-    res_url = f"{base_url}/res.php"
-
     if notify_func:
-        await notify_func(f"🔑 [LOG: API Solver] Mengirim sitekey ke {base_url}...")
+        await notify_func("🔑 [LOG: API Solver] Mengirim task reCAPTCHA v2 Invisible ke CaptchaSolv API...")
+
+    payload = {
+        "api_key": api_key,
+        "type": "RecaptchaV2Invisible",
+        "site_url": page_url,
+        "timeout_secs": 60,
+        "data": {
+            "site_key": site_key
+        }
+    }
 
     async with aiohttp.ClientSession() as session:
-        # 1. Kirim Task Captcha
-        payload = {
-            "key": api_key,
-            "method": "userrecaptcha",
-            "googlekey": site_key,
-            "pageurl": page_url,
-            "invisible": "1",
-            "json": "1"
-        }
-        
-        async with session.post(in_url, data=payload) as resp:
-            data = await resp.json()
-            if data.get("status") != 1:
-                raise RuntimeError(f"Gagal membuat task solver API: {data.get('request')}")
-            task_id = data.get("request")
-            logger.info(f"Task Captcha Solver berhasil dibuat! Task ID: {task_id}")
+        try:
+            async with session.post(CAPTCHASOLV_ENDPOINT, json=payload, timeout=aiohttp.ClientTimeout(total=70)) as resp:
+                if resp.status != 200:
+                    text = await resp.text()
+                    raise RuntimeError(f"HTTP Error {resp.status}: {text[:100]}")
+                
+                res_data = await resp.json()
+                logger.info(f"CaptchaSolv API Response: {res_data}")
 
-        if notify_func:
-            await notify_func(f"⏳ [LOG: API Solver] Task ID: {task_id}. Menunggu token dari solver...")
+                error_id = res_data.get("errorId", -1)
+                if error_id == 0 and res_data.get("status") == "ready":
+                    data_obj = res_data.get("data") or {}
+                    solution_obj = data_obj.get("solution") or {}
+                    token = solution_obj.get("token") or res_data.get("token")
+                    if token:
+                        solv_time = res_data.get("solvtime", 0)
+                        logger.info(f"Token g-recaptcha-response berhasil didapatkan dari CaptchaSolv dalam {solv_time}s!")
+                        return token
+                    raise RuntimeError("Token tidak ditemukan pada response CaptchaSolv.")
+                else:
+                    error_msg = res_data.get("errorMessage") or f"errorId {error_id}"
+                    raise RuntimeError(f"CaptchaSolv API Error: {error_msg}")
 
-        # 2. Polling Hasil Token (Setiap 5 detik hingga maksimal 60 detik)
-        start_time = asyncio.get_event_loop().time()
-        while (asyncio.get_event_loop().time() - start_time) < 60:
-            await asyncio.sleep(5)
-            params = {
-                "key": api_key,
-                "action": "get",
-                "id": task_id,
-                "json": "1"
-            }
-            async with session.get(res_url, params=params) as res_resp:
-                res_data = await res_resp.json()
-                if res_data.get("status") == 1:
-                    token = res_data.get("request")
-                    logger.info("Token g-recaptcha-response berhasil didapatkan dari Solver API!")
-                    return token
-                elif res_data.get("request") != "CAPCHA_NOT_READY":
-                    raise RuntimeError(f"Error Solver API: {res_data.get('request')}")
-
-        raise TimeoutError("Waktu tunggu token dari Captcha Solver API habis (Timeout 60s).")
+        except Exception as err:
+            logger.error(f"Gagal memecahkan captcha via CaptchaSolv API: {err}")
+            raise err
 
 
 async def run_capskip_demo(headless: bool = True, status_callback=None):
     """
     Fungsi web scraping demo reCAPTCHA v2 Invisible.
     
-    Alur Kerja dengan API Solver (SolveCaptcha / 2Captcha):
+    Alur Kerja dengan CaptchaSolv API (https://docsv2.captchasolv.com/docs):
     1. Membuka halaman CapSkip demo.
-    2. Jika API Key terdeteksi (SOLVECAPTCHA_API_KEY / TWOCAPTCHA_API_KEY):
-       - Meminta token reCAPTCHA ke Solver API (invisible=1).
+    2. Jika API Key terdeteksi (CAPTCHASOLV_API_KEY / CAPTCHA_API_KEY / SOLVECAPTCHA_API_KEY):
+       - Meminta token reCAPTCHA v2 Invisible ke CaptchaSolv API (POST https://v2.captchasolv.com/solve).
        - Menyuapkan/Injeksi token ke hidden field g-recaptcha-response.
        - Memanggil callback JS `capskipV2InvisibleToken(token)`.
     3. Jika API Key tidak ada:
        - Menekan tombol Check secara otomatis & menunggu 10s.
     4. Mengambil screenshot Desktop (Zoom 90%, centered scroll).
     """
-    api_key = os.getenv("SOLVECAPTCHA_API_KEY") or os.getenv("TWOCAPTCHA_API_KEY") or os.getenv("CAPTCHA_API_KEY", "")
+    api_key = (
+        os.getenv("CAPTCHASOLV_API_KEY") or
+        os.getenv("CAPTCHA_API_KEY") or
+        os.getenv("SOLVECAPTCHA_API_KEY") or
+        os.getenv("TWOCAPTCHA_API_KEY", "")
+    ).strip()
 
     async def notify(text: str):
         logger.info(text)
@@ -131,11 +128,11 @@ async def run_capskip_demo(headless: bool = True, status_callback=None):
             token = ""
             # 2. PROSES SOLVER (Jika API Key Tersedia)
             if api_key:
-                await notify("🔑 [LOG: 2/4] API Key terdeteksi! Mengirim request ke Captcha Solver API...")
+                await notify("🔑 [LOG: 2/4] API Key CaptchaSolv terdeteksi! Mengirim request ke CaptchaSolv API...")
                 try:
                     token = await solve_recaptcha_api(api_key, SITE_KEY, TARGET_URL, notify_func=notify)
                     
-                    await notify("⚡ [LOG: 3/4] Token didapatkan! Menyuntikkan token & memicu Callback JS...")
+                    await notify("⚡ [LOG: 3/4] Token CaptchaSolv didapatkan! Menyuntikkan token & memicu Callback JS...")
                     
                     # Injeksi token ke form & panggil callback
                     await page.evaluate("""(token) => {
@@ -152,8 +149,8 @@ async def run_capskip_demo(headless: bool = True, status_callback=None):
                     await asyncio.sleep(3) # Tunggu 3 detik agar widget merender Success: true
                     
                 except Exception as err:
-                    logger.error(f"Gagal memecahkan captcha via API Solver: {err}")
-                    await notify(f"⚠️ Solver API Error: {str(err)[:60]}. Menggunakan metode tombol Check standar...")
+                    logger.error(f"Gagal memecahkan captcha via CaptchaSolv API: {err}")
+                    await notify(f"⚠️ CaptchaSolv API Error: {str(err)[:60]}. Menggunakan metode tombol Check standar...")
                     api_key = "" # Fallback ke klik manual
             
             # MODE KLIK STANDAR (Jika API Key tidak ada / fallback)
@@ -244,3 +241,4 @@ async def run_capskip_demo(headless: bool = True, status_callback=None):
 
 if __name__ == "__main__":
     asyncio.run(run_capskip_demo(headless=True))
+
