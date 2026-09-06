@@ -18,50 +18,82 @@ DEFAULT_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.
 
 async def solve_recaptcha_api(api_key: str, site_key: str, page_url: str, user_agent: str = DEFAULT_USER_AGENT, notify_func=None):
     """
-    Fungsi untuk mengirim request solve reCAPTCHA v2 Invisible ke CaptchaSolv REST API
-    (https://v2.captchasolv.com/solve) secara asynchronous.
+    Fungsi untuk mengirim request solve reCAPTCHA v2 Invisible ke CaptchaSolv API.
+    Mendukung dual-compatibility:
+    1. Mencoba CaptchaSolv API v2 (POST https://v2.captchasolv.com/solve)
+    2. Fallback ke CaptchaSolv API v1 (POST https://v1.captchasolv.com/solve)
     """
     if notify_func:
         await notify_func("🔑 [LOG: API Solver] Mengirim task reCAPTCHA v2 Invisible ke CaptchaSolv API...")
 
-    payload = {
-        "api_key": api_key,
-        "type": "RecaptchaV2Invisible",
-        "site_url": page_url,
-        "useragent": user_agent,
-        "timeout_secs": 60,
-        "data": {
-            "site_key": site_key
-        }
-    }
-
     async with aiohttp.ClientSession() as session:
+        # --- PERCOBAAN 1: CaptchaSolv API v2 ---
+        v2_payload = {
+            "api_key": api_key,
+            "type": "RecaptchaV2Invisible",
+            "site_url": page_url,
+            "useragent": user_agent,
+            "timeout_secs": 60,
+            "data": {
+                "site_key": site_key
+            }
+        }
+
         try:
-            async with session.post(CAPTCHASOLV_ENDPOINT, json=payload, timeout=aiohttp.ClientTimeout(total=70)) as resp:
+            async with session.post("https://v2.captchasolv.com/solve", json=v2_payload, timeout=aiohttp.ClientTimeout(total=65)) as resp:
+                if resp.status == 200:
+                    res_data = await resp.json()
+                    logger.info(f"CaptchaSolv API v2 Response: {res_data}")
+
+                    error_id = res_data.get("errorId", -1)
+                    if error_id == 0 and res_data.get("status") == "ready":
+                        data_obj = res_data.get("data") or {}
+                        solution_obj = data_obj.get("solution") or {}
+                        token = solution_obj.get("token") or res_data.get("token")
+                        if token:
+                            solv_time = res_data.get("solvtime", 0)
+                            logger.info(f"Token didapatkan via API v2 dalam {solv_time}s!")
+                            return token
+        except Exception as err_v2:
+            logger.warning(f"Percobaan CaptchaSolv API v2 gagal ({err_v2}). Mencoba fallback API v1...")
+
+        # --- PERCOBAAN 2: CaptchaSolv API v1 (Fallback) ---
+        if notify_func:
+            await notify_func("🔄 [LOG: API Solver] Memproses via CaptchaSolv API v1...")
+
+        v1_payload = {
+            "clientKey": api_key,
+            "task": {
+                "type": "RecaptchaV2InvisibleTaskProxyless",
+                "websiteURL": page_url,
+                "websiteKey": site_key
+            }
+        }
+
+        try:
+            async with session.post("https://v1.captchasolv.com/solve", json=v1_payload, timeout=aiohttp.ClientTimeout(total=65)) as resp:
                 if resp.status != 200:
                     text = await resp.text()
                     raise RuntimeError(f"HTTP Error {resp.status}: {text[:100]}")
-                
+
                 res_data = await resp.json()
-                logger.info(f"CaptchaSolv API Response: {res_data}")
+                logger.info(f"CaptchaSolv API v1 Response: {res_data}")
 
                 error_id = res_data.get("errorId", -1)
-                if error_id == 0 and res_data.get("status") == "ready":
-                    data_obj = res_data.get("data") or {}
-                    solution_obj = data_obj.get("solution") or {}
+                if error_id == 0:
+                    solution_obj = res_data.get("solution") or {}
                     token = solution_obj.get("token") or res_data.get("token")
                     if token:
-                        solv_time = res_data.get("solvtime", 0)
-                        logger.info(f"Token g-recaptcha-response berhasil didapatkan dari CaptchaSolv dalam {solv_time}s!")
+                        logger.info("Token didapatkan via API v1!")
                         return token
-                    raise RuntimeError("Token tidak ditemukan pada response CaptchaSolv.")
+                    raise RuntimeError("Token tidak ditemukan pada response CaptchaSolv API v1.")
                 else:
                     error_msg = res_data.get("errorMessage") or f"errorId {error_id}"
-                    raise RuntimeError(f"CaptchaSolv API Error: {error_msg}")
+                    raise RuntimeError(f"CaptchaSolv API v1 Error: {error_msg}")
 
-        except Exception as err:
-            logger.error(f"Gagal memecahkan captcha via CaptchaSolv API: {err}")
-            raise err
+        except Exception as err_v1:
+            logger.error(f"Gagal memecahkan captcha via API v2 maupun API v1: {err_v1}")
+            raise err_v1
 
 
 async def run_capskip_demo(headless: bool = True, status_callback=None):
