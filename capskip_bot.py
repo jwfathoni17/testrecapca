@@ -1,4 +1,5 @@
 import os
+import html
 import logging
 import asyncio
 import uvicorn
@@ -61,8 +62,10 @@ async def handle_test_callback(update: Update, context: ContextTypes.DEFAULT_TYP
     
     async def update_status(text: str):
         try:
+            # Escape HTML agar tidak menyebabkan error tag yang tidak didukung Telegram
+            safe_text = html.escape(str(text))
             await context.bot.edit_message_text(
-                text=text,
+                text=safe_text,
                 chat_id=chat_id,
                 message_id=status_msg.message_id,
                 parse_mode="HTML"
@@ -75,14 +78,15 @@ async def handle_test_callback(update: Update, context: ContextTypes.DEFAULT_TYP
         res = await run_capskip_demo(headless=True, status_callback=update_status)
         
         screenshot_path = res.get("screenshot")
-        status_text = res.get("status_text", "Tombol Check Ditekan")
+        raw_status = res.get("status_text", "Tombol Check Ditekan")
+        safe_status = html.escape(str(raw_status))
         
         # 3. Kirim foto hasil ke Telegram jika berhasil
         if res.get("success") and screenshot_path and os.path.exists(screenshot_path):
             caption = (
                 "✅ <b>WEB SCRAPING SELESAI!</b>\n\n"
                 "🌐 <b>Target URL</b>: <code>https://capskip.com/captcha-demo/recaptcha-v2-invisible/</code>\n"
-                f"📊 <b>Status Web Akhir</b>: <code>{status_text}</code>\n\n"
+                f"📊 <b>Status Web Akhir</b>: <code>{safe_status}</code>\n\n"
                 "🖼️ <i>Bukti screenshot halaman terlampir di bawah:</i>"
             )
             
@@ -102,24 +106,29 @@ async def handle_test_callback(update: Update, context: ContextTypes.DEFAULT_TYP
                 pass
                 
         else:
-            error_msg = res.get("error", "Gagal melakukan scraping")
+            raw_error = res.get("error", "Gagal melakukan scraping")
+            safe_error = html.escape(str(raw_error))
             await context.bot.edit_message_text(
                 chat_id=chat_id,
                 message_id=status_msg.message_id,
-                text=f"❌ <b>Gagal Memproses Scraping:</b>\n<code>{error_msg}</code>",
+                text=f"❌ <b>Gagal Memproses Scraping:</b>\n<code>{safe_error}</code>",
                 parse_mode="HTML",
                 reply_markup=get_test_keyboard()
             )
             
     except Exception as e:
         logger.error(f"Error pada callback handler: {e}")
-        await context.bot.edit_message_text(
-            chat_id=chat_id,
-            message_id=status_msg.message_id,
-            text=f"❌ <b>Terjadi Kesalahan:</b>\n<code>{str(e)}</code>",
-            parse_mode="HTML",
-            reply_markup=get_test_keyboard()
-        )
+        safe_exc = html.escape(str(e))
+        try:
+            await context.bot.edit_message_text(
+                chat_id=chat_id,
+                message_id=status_msg.message_id,
+                text=f"❌ <b>Terjadi Kesalahan:</b>\n<code>{safe_exc}</code>",
+                parse_mode="HTML",
+                reply_markup=get_test_keyboard()
+            )
+        except Exception:
+            pass
 
 @app.get("/")
 async def health_check():
